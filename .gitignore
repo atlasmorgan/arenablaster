@@ -1,0 +1,11 @@
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# VS Code workspace file (contains local absolute paths)
+*.code-workspace
+
+# Editor & OS misc
+Thumbs.db
+*.log

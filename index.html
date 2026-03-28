@@ -1,0 +1,740 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Arena Blaster</title>
+
+    <!-- Tailwind CSS via CDN — gives us utility classes for the HUD layout -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Firebase compat CDN (no build step needed) -->
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body { overflow: hidden; }
+
+      /* Scale the canvas down to fit narrow screens while keeping the 800×600 logic untouched */
+      #gameCanvas {
+        display: block;
+        border: 2px solid #334155;
+        width: 100%;
+        max-width: 800px;
+        height: auto;
+        /* Prevent touch events from scrolling/zooming the page during play */
+        touch-action: none;
+      }
+
+      /* Stop the whole page from bouncing/zooming on mobile */
+      body { touch-action: none; }
+
+      /* D-pad button base style */
+      .dpad-btn {
+        width: 52px; height: 52px;
+        background: #1e293b;
+        border: 2px solid #334155;
+        border-radius: 10px;
+        color: #94a3b8;
+        font-size: 22px;
+        display: flex; align-items: center; justify-content: center;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      .dpad-btn:active { background: #334155; color: #00e5ff; }
+
+      /* Fire button */
+      #btnFire {
+        width: 80px; height: 80px;
+        background: #7f1d1d;
+        border: 3px solid #ef4444;
+        border-radius: 50%;
+        color: #fca5a5;
+        font-size: 13px;
+        font-weight: bold;
+        font-family: monospace;
+        display: flex; align-items: center; justify-content: center;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #btnFire:active { background: #ef4444; color: white; }
+    </style>
+  </head>
+
+  <body class="bg-gray-900 min-h-screen flex flex-col items-center justify-center gap-2 px-2">
+
+    <!-- ===================== HUD ===================== -->
+    <!-- Sits above the canvas; shows score and lives -->
+    <div id="hud" class="w-full max-w-[800px] flex justify-between items-center px-4 py-2 bg-gray-800 rounded-lg text-cyan-400 font-mono text-lg font-semibold">
+      <span>Score: <span id="scoreValue">0</span></span>
+      <span>Arena Blaster</span>
+      <span>Lives: <span id="livesValue">3</span></span>
+    </div>
+
+    <!-- ===================== CANVAS ===================== -->
+    <!-- Wrapper is relative so the game over panel can overlay the canvas exactly -->
+    <div id="canvasWrapper" style="position:relative; width:100%; max-width:800px;">
+      <canvas id="gameCanvas"></canvas>
+
+      <!-- ===================== START PANEL ===================== -->
+      <!-- Shown on page load and after each game; player enters name here -->
+      <div id="startPanel" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-4 font-mono p-4">
+        <h1 class="text-cyan-400 font-bold" style="font-size:clamp(2rem,8vw,3.5rem)">Arena Blaster</h1>
+        <p class="text-gray-400 text-sm">Defend the arena. Shoot everything.</p>
+
+        <div class="flex flex-col gap-2 items-center">
+          <input id="playerNameInput" type="text" maxlength="16" placeholder="Enter your name"
+            class="px-4 py-2 bg-gray-800 border border-cyan-700 rounded text-cyan-300 text-base outline-none focus:border-cyan-400 w-52 text-center" />
+          <button id="startBtn"
+            class="px-8 py-2 bg-cyan-700 hover:bg-cyan-600 text-white font-bold rounded-lg text-base transition-colors w-52">
+            Play!
+          </button>
+        </div>
+      </div>
+
+      <!-- ===================== GAME OVER PANEL ===================== -->
+      <!-- Sits on top of the canvas when the game ends -->
+      <div id="gameOverPanel" class="hidden absolute inset-0 bg-black/80 flex flex-col items-center justify-center gap-3 font-mono p-4">
+
+        <h2 class="text-red-500 font-bold" style="font-size:clamp(2rem,8vw,4rem)">GAME OVER</h2>
+        <p id="finalScoreText" class="text-yellow-400 text-xl font-semibold"></p>
+        <p id="submitStatus" class="text-gray-400 text-xs"></p>
+
+        <!-- Top 10 leaderboard -->
+        <div class="w-full max-w-xs">
+          <h3 class="text-cyan-400 font-bold text-center mb-2 text-xs uppercase tracking-widest">Top 10</h3>
+          <ol id="leaderboardList" class="text-gray-300 text-sm space-y-1 text-center"></ol>
+        </div>
+
+        <button id="playAgainBtn"
+          class="mt-1 px-6 py-2 bg-gray-700 hover:bg-gray-600 text-cyan-400 font-bold rounded-lg border border-cyan-800 transition-colors text-sm">
+          Play Again
+        </button>
+      </div>
+    </div>
+
+    <!-- ===================== MOBILE CONTROLS ===================== -->
+    <!-- Only visible on small screens; desktop players use keyboard -->
+    <div class="flex xl:hidden w-full max-w-[800px] justify-between items-center px-4 py-2">
+
+      <!-- D-pad: up/left/right/down arranged in a cross -->
+      <div class="grid grid-cols-3 gap-1 w-[168px]">
+        <div></div>
+        <button id="btnUp"    class="dpad-btn">↑</button>
+        <div></div>
+        <button id="btnLeft"  class="dpad-btn">←</button>
+        <button id="btnDown"  class="dpad-btn">↓</button>
+        <button id="btnRight" class="dpad-btn">→</button>
+      </div>
+
+      <!-- Fire button -->
+      <button id="btnFire">FIRE</button>
+    </div>
+
+    <!-- How to Play button -->
+    <button
+      onclick="paused=true; document.getElementById('howToPlayModal').classList.remove('hidden')"
+      class="px-5 py-2 bg-gray-700 hover:bg-gray-600 text-cyan-400 font-mono font-semibold rounded-lg border border-cyan-800 transition-colors"
+    >
+      How to Play
+    </button>
+
+    <!-- ===================== HOW TO PLAY MODAL ===================== -->
+    <div id="howToPlayModal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+      <div class="bg-gray-800 border border-cyan-700 rounded-xl p-8 max-w-md w-full font-mono text-sm shadow-2xl">
+        <h2 class="text-cyan-400 text-2xl font-bold mb-5 text-center">How to Play</h2>
+        <ul class="text-gray-300 space-y-3">
+          <li><span class="text-cyan-400 font-bold">WASD / Arrows / D-pad</span> — Move your ship</li>
+          <li><span class="text-yellow-400 font-bold">Space / FIRE button</span> — Shoot upward</li>
+          <li><span class="text-green-400 font-bold">Shoot enemies</span> — +1 point per kill</li>
+          <li><span class="text-red-400 font-bold">Enemy touches you</span> — −1 life</li>
+          <li><span class="text-red-400 font-bold">Enemy bullet hits you</span> — −1 life</li>
+          <li><span class="text-red-400 font-bold">Enemy reaches the bottom</span> — −1 life</li>
+          <li><span class="text-orange-400 font-bold">0 lives</span> — Game Over</li>
+          <li class="pt-1"><span class="text-gray-400 font-bold">Click / Enter</span> — Restart after Game Over</li>
+        </ul>
+        <button
+          onclick="paused=false; document.getElementById('howToPlayModal').classList.add('hidden')"
+          class="mt-6 w-full py-2 bg-cyan-700 hover:bg-cyan-600 text-white font-bold rounded-lg transition-colors"
+        >
+          Got it!
+        </button>
+      </div>
+    </div>
+
+    <!-- ===================== SCRIPT ===================== -->
+    <script>
+      // ============================================================
+      // CONFIG — tweak these numbers to change how the game feels
+      // ============================================================
+      const CANVAS_WIDTH  = 800;   // arena width in pixels
+      const CANVAS_HEIGHT = 600;   // arena height in pixels
+      const PLAYER_SPEED  = 4;     // pixels moved per frame
+      const PLAYER_SIZE   = 20;    // player circle radius in pixels
+      const PLAYER_COLOR  = '#00e5ff'; // cyan-ish accent colour
+
+      const BULLET_SPEED    = 10;  // pixels per frame the bullet travels
+      const BULLET_SIZE     = 5;   // bullet circle radius in pixels
+      const BULLET_COLOR    = '#facc15'; // yellow
+      const SHOOT_COOLDOWN  = 12;  // frames between shots (12 ≈ 5 shots/sec at 60fps)
+
+      const ENEMY_SIZE        = 22;   // enemy ship radius (slightly bigger than player)
+      const ENEMY_SPEED       = 0.8;  // pixels per frame enemies move downward
+      const ENEMY_SPAWN_RATE  = 90;   // spawn one enemy every 90 frames (~1.5 sec)
+      const ENEMY_BULLET_SPEED = 2;   // pixels per frame enemy bullets travel downward
+      const ENEMY_BULLET_SIZE  = 5;   // enemy bullet radius
+      const ENEMY_BULLET_COLOR = '#f97316'; // orange so it's easy to distinguish
+      // Each enemy shoots every 90–180 frames (random per ship, so they don't all fire at once)
+      const ENEMY_SHOOT_MIN   = 90;
+      const ENEMY_SHOOT_MAX   = 180;
+
+      // ============================================================
+      // SETUP — size the canvas and grab the drawing context
+      // ============================================================
+      const canvas = document.getElementById('gameCanvas');
+      const ctx    = canvas.getContext('2d'); // 2D rendering context
+
+      // Apply our fixed dimensions to the canvas element
+      canvas.width  = CANVAS_WIDTH;
+      canvas.height = CANVAS_HEIGHT;
+
+      // ============================================================
+      // GAME STATE — variables that change as the game runs
+      // ============================================================
+      let score = 0;
+      let lives = 3;
+      let playerName   = 'Anonymous'; // set from the start panel before the game begins
+      let gameStarted  = false;       // true once the player clicks Play on the start panel
+
+      // Player object: tracks position and shot cooldown
+      const player = {
+        x: CANVAS_WIDTH  / 2, // start in the horizontal center
+        y: CANVAS_HEIGHT / 2, // start in the vertical center
+        cooldown: 0, // frames remaining before the player can shoot again
+      };
+
+      // Array of active bullets — each bullet is { x, y, vx, vy }
+      const bullets = [];
+
+      // Array of active enemies — each enemy is { x, y, shootTimer }
+      const enemies = [];
+
+      // Array of active enemy bullets — each is { x, y }
+      const enemyBullets = [];
+
+      // Counts frames so we know when to spawn the next enemy
+      let spawnTimer = 0;
+
+      // When true, the game loop stops updating and shows the game over screen
+      let gameOver = false;
+
+      // ============================================================
+      // FIREBASE — leaderboard powered by Firestore
+      // ============================================================
+      const firebaseConfig = {
+        apiKey:            "AIzaSyC8fb0lvemYTG45mtgj3Lc6zbgqf3lJV1Y",
+        authDomain:        "arena-blaster-61c12.firebaseapp.com",
+        projectId:         "arena-blaster-61c12",
+        storageBucket:     "arena-blaster-61c12.firebasestorage.app",
+        messagingSenderId: "296145469266",
+        appId:             "1:296145469266:web:4e5c5ec8bbac87e857848b",
+        measurementId:     "G-S4K7QQB658"
+      };
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.firestore();
+
+      // ---- Start panel ----
+      function showStartPanel() {
+        document.getElementById('startPanel').classList.remove('hidden');
+        document.getElementById('playerNameInput').focus();
+      }
+
+      function startGame() {
+        const input = document.getElementById('playerNameInput').value.trim();
+        playerName  = input || 'Anonymous';
+        document.getElementById('startPanel').classList.add('hidden');
+        gameStarted = true;
+        // Kick off background music (counts as user interaction so autoplay is allowed)
+        bgMusic.play().catch(() => {}); // silently ignore if blocked
+      }
+
+      // Play button + Enter key on the name field both start the game
+      document.getElementById('startBtn').addEventListener('click', startGame);
+      document.getElementById('playerNameInput').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.stopPropagation(); startGame(); }
+      });
+
+      // ---- Game over panel ----
+      function showGameOverPanel(finalScore) {
+        document.getElementById('finalScoreText').textContent = `Final Score: ${finalScore}`;
+        document.getElementById('submitStatus').textContent   = 'Saving score…';
+        document.getElementById('gameOverPanel').classList.remove('hidden');
+        submitScore(playerName, finalScore); // auto-submit with the name from the start screen
+      }
+
+      function hideGameOverPanel() {
+        document.getElementById('gameOverPanel').classList.add('hidden');
+      }
+
+      // Auto-submit the score using the name captured at game start
+      async function submitScore(name, scoreVal) {
+        try {
+          await db.collection('scores').add({
+            name:      name,
+            score:     scoreVal,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          });
+          document.getElementById('submitStatus').textContent = `Saved as "${name}"`;
+        } catch (e) {
+          document.getElementById('submitStatus').textContent = 'Could not save score.';
+        }
+        loadLeaderboard();
+      }
+
+      // Fetch the top 10 scores from Firestore and render them into the list
+      async function loadLeaderboard() {
+        const list = document.getElementById('leaderboardList');
+        list.innerHTML = '<li class="text-gray-500">Loading…</li>';
+        try {
+          const snap = await db.collection('scores')
+            .orderBy('score', 'desc')
+            .limit(10)
+            .get();
+          if (snap.empty) {
+            list.innerHTML = '<li class="text-gray-500">No scores yet!</li>';
+            return;
+          }
+          list.innerHTML = '';
+          snap.docs.forEach((doc, i) => {
+            const d  = doc.data();
+            const li = document.createElement('li');
+            // Highlight the player's just-submitted score in yellow
+            li.className = 'flex justify-between px-2 py-0.5 rounded ' +
+              (d.name === playerName && d.score === scoreVal ? 'text-yellow-400' : 'text-gray-300');
+            li.innerHTML = `<span>${i + 1}. ${d.name}</span><span>${d.score}</span>`;
+            list.appendChild(li);
+          });
+        } catch (e) {
+          list.innerHTML = '<li class="text-red-400">Could not load scores.</li>';
+        }
+      }
+
+      // Background music — loops continuously during play
+      const bgMusic = new Audio('assets/bgmusic.mp3');
+      bgMusic.loop = true;
+      bgMusic.volume = 0.6; // slightly quieter so it doesn't overpower sound effects
+
+      // Player shoot sound effect
+      const shootSound = new Audio('assets/shoot.mp3');
+
+      // Hit / lose-a-life sound effect
+      const hitSound = new Audio('assets/hit.mp3');
+
+      // Game over sound effect
+      const gameOverSound = new Audio('assets/gameover.wav');
+
+      // Call this instead of setting gameOver = true directly,
+      // so the sound always plays alongside the screen.
+      // Deduct a life, play the hit sound, and trigger game over if lives hit 0
+      function loseLife() {
+        hitSound.currentTime = 0;
+        hitSound.play();
+        lives--;
+        if (lives <= 0) triggerGameOver();
+      }
+
+      function triggerGameOver() {
+        gameOver = true;
+        bgMusic.pause();
+        bgMusic.currentTime = 0;
+        gameOverSound.currentTime = 0;
+        gameOverSound.play();
+        showGameOverPanel(score);
+      }
+
+      // When true, update() is skipped so the game freezes behind the modal
+      let paused = false;
+
+      // ============================================================
+      // INPUT — track which keys are currently held down
+      // ============================================================
+      // Using an object (instead of a single variable) lets us detect
+      // multiple keys at once, so WASD and arrow keys all work together
+      // and diagonal movement is smooth.
+      const keys = {};
+
+      // When a key is pressed, store it as "true" in the keys map
+      window.addEventListener('keydown', (e) => {
+        keys[e.key] = true;
+        // Prevent arrow keys and space from scrolling the page
+        if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) {
+          e.preventDefault();
+        }
+      });
+
+      // When a key is released, remove it from the map
+      window.addEventListener('keyup', (e) => {
+        keys[e.key] = false;
+      });
+
+      // ============================================================
+      // UPDATE — called every frame to advance game logic
+      // ============================================================
+      // Resets everything back to the initial state so the player can try again
+      function resetGame() {
+        hideGameOverPanel();
+        score       = 0;
+        lives       = 3;
+        spawnTimer  = 0;
+        gameOver    = false;
+        gameStarted = false;
+        bgMusic.pause();
+        bgMusic.currentTime = 0;
+        // Pre-fill the name so the player doesn't have to retype it
+        document.getElementById('playerNameInput').value = playerName === 'Anonymous' ? '' : playerName;
+        showStartPanel();
+        player.x   = CANVAS_WIDTH  / 2;
+        player.y   = CANVAS_HEIGHT / 2;
+        player.cooldown = 0;
+        bullets.length      = 0; // empty the arrays in place
+        enemies.length      = 0;
+        enemyBullets.length = 0;
+      }
+
+      function update() {
+        // Freeze until player has entered their name and clicked Play
+        if (!gameStarted) return;
+
+        // Freeze all logic while the how-to-play modal is open
+        if (paused) return;
+
+        // Freeze all logic while the game over panel is shown
+        if (gameOver) return;
+        // --- Player movement ---
+        // We accumulate horizontal (dx) and vertical (dy) intent first,
+        // then move the player, then clamp to the arena boundaries.
+
+        let dx = 0; // how far to move left/right this frame
+        let dy = 0; // how far to move up/down this frame
+
+        // WASD keys
+        if (keys['w'] || keys['W'] || keys['ArrowUp'])    dy -= 1;
+        if (keys['s'] || keys['S'] || keys['ArrowDown'])  dy += 1;
+        if (keys['a'] || keys['A'] || keys['ArrowLeft'])  dx -= 1;
+        if (keys['d'] || keys['D'] || keys['ArrowRight']) dx += 1;
+
+        // Normalise diagonal movement so speed stays constant at PLAYER_SPEED.
+        // Without this, moving diagonally would be ~41% faster (√2 × speed).
+        if (dx !== 0 && dy !== 0) {
+          const SQRT2 = 1.4142135623730951;
+          dx /= SQRT2;
+          dy /= SQRT2;
+        }
+
+        // Apply speed to the direction vector
+        player.x += dx * PLAYER_SPEED;
+        player.y += dy * PLAYER_SPEED;
+
+        // --- Boundary clamping ---
+        // Keep the player fully inside the canvas.
+        // We use PLAYER_SIZE as the margin so the circle never goes off-edge.
+        player.x = Math.max(PLAYER_SIZE, Math.min(CANVAS_WIDTH  - PLAYER_SIZE, player.x));
+        player.y = Math.max(PLAYER_SIZE, Math.min(CANVAS_HEIGHT - PLAYER_SIZE, player.y));
+
+        // --- Shooting ---
+        // Tick down the cooldown timer every frame
+        if (player.cooldown > 0) player.cooldown--;
+
+        // Space bar fires a bullet straight up, regardless of movement direction
+        if (keys[' '] && player.cooldown === 0) {
+          bullets.push({
+            x:  player.x,
+            y:  player.y,
+            vx: 0,               // no horizontal drift
+            vy: -BULLET_SPEED,   // negative y = upward on canvas
+          });
+          player.cooldown = SHOOT_COOLDOWN; // start cooldown so we can't spam
+          shootSound.currentTime = 0;       // rewind so rapid fire never gets cut off
+          shootSound.play();
+        }
+
+        // --- Move bullets & remove ones that left the arena ---
+        for (let i = bullets.length - 1; i >= 0; i--) {
+          const b = bullets[i];
+          b.x += b.vx;
+          b.y += b.vy;
+
+          // If the bullet is fully off any edge, remove it from the array.
+          // We iterate backwards so splicing doesn't skip elements.
+          if (b.x < -BULLET_SIZE || b.x > CANVAS_WIDTH  + BULLET_SIZE ||
+              b.y < -BULLET_SIZE || b.y > CANVAS_HEIGHT + BULLET_SIZE) {
+            bullets.splice(i, 1);
+          }
+        }
+
+        // --- Spawn enemies ---
+        spawnTimer++;
+        if (spawnTimer >= ENEMY_SPAWN_RATE) {
+          spawnTimer = 0;
+          enemies.push({
+            x: ENEMY_SIZE + Math.random() * (CANVAS_WIDTH - ENEMY_SIZE * 2),
+            y: -ENEMY_SIZE,
+            // Each ship gets its own random shoot timer so they don't all fire together
+            shootTimer: ENEMY_SHOOT_MIN + Math.random() * (ENEMY_SHOOT_MAX - ENEMY_SHOOT_MIN),
+          });
+        }
+
+        // --- Move enemies, tick their shoot timers, remove off-screen ---
+        for (let i = enemies.length - 1; i >= 0; i--) {
+          const e = enemies[i];
+          e.y += ENEMY_SPEED;
+
+          // Count down this enemy's personal shoot timer
+          e.shootTimer--;
+          if (e.shootTimer <= 0) {
+            // Fire a bullet straight down from this enemy's position
+            enemyBullets.push({ x: e.x, y: e.y + ENEMY_SIZE });
+            // Reset to a new random interval so fire cadence stays unpredictable
+            e.shootTimer = ENEMY_SHOOT_MIN + Math.random() * (ENEMY_SHOOT_MAX - ENEMY_SHOOT_MIN);
+          }
+
+          if (e.y > CANVAS_HEIGHT + ENEMY_SIZE) {
+            enemies.splice(i, 1);
+            loseLife();
+          }
+        }
+
+        // --- Move enemy bullets & remove off-screen ---
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+          enemyBullets[i].y += ENEMY_BULLET_SPEED;
+          if (enemyBullets[i].y > CANVAS_HEIGHT + ENEMY_BULLET_SIZE) {
+            enemyBullets.splice(i, 1);
+          }
+        }
+
+        // --- Enemy bullet vs player collisions ---
+        for (let i = enemyBullets.length - 1; i >= 0; i--) {
+          const b = enemyBullets[i];
+          const dist = Math.hypot(player.x - b.x, player.y - b.y);
+          if (dist < PLAYER_SIZE + ENEMY_BULLET_SIZE) {
+            enemyBullets.splice(i, 1); // bullet is consumed on hit
+            loseLife();
+          }
+        }
+
+        // --- Bullet vs enemy collisions ---
+        // Check every bullet against every enemy. If they overlap, remove both.
+        // We iterate both arrays backwards so splicing doesn't skip entries.
+        for (let bi = bullets.length - 1; bi >= 0; bi--) {
+          for (let ei = enemies.length - 1; ei >= 0; ei--) {
+            const b = bullets[bi];
+            const e = enemies[ei];
+            const dist = Math.hypot(b.x - e.x, b.y - e.y); // distance between centers
+            if (dist < BULLET_SIZE + ENEMY_SIZE) {
+              bullets.splice(bi, 1); // destroy the bullet
+              enemies.splice(ei, 1); // destroy the enemy
+              score++;               // award a point
+              break; // this bullet is gone, no need to check other enemies
+            }
+          }
+        }
+
+        // --- Player vs enemy collisions ---
+        // If any enemy center is within (PLAYER_SIZE + ENEMY_SIZE) of the player, it's a hit.
+        for (let i = enemies.length - 1; i >= 0; i--) {
+          const e = enemies[i];
+          const dist = Math.hypot(player.x - e.x, player.y - e.y);
+          if (dist < PLAYER_SIZE + ENEMY_SIZE) {
+            enemies.splice(i, 1); // enemy is consumed on impact
+            loseLife();
+          }
+        }
+
+        // --- HUD update ---
+        // Reflect the latest score and lives values in the DOM
+        document.getElementById('scoreValue').textContent = score;
+        document.getElementById('livesValue').textContent = lives;
+      }
+
+      // ============================================================
+      // DRAW — called every frame to render the current game state
+      // ============================================================
+      function draw() {
+        // Clear the entire canvas before drawing the new frame
+        ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // Draw arena background (dark slate)
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+
+        // --- Draw player as a retro spaceship ---
+        // All coordinates are relative to (player.x, player.y).
+        // The ship points upward (negative y direction).
+        const s = PLAYER_SIZE; // shorthand so the shape scales with PLAYER_SIZE
+
+        ctx.save();
+        ctx.translate(player.x, player.y); // move origin to player center
+
+        // -- Main body (tall pointed hull) --
+        ctx.beginPath();
+        ctx.moveTo(0, -s);          // nose tip (top)
+        ctx.lineTo(s * 0.5, s * 0.4);  // bottom-right of body
+        ctx.lineTo(0, s * 0.2);     // center indent at bottom
+        ctx.lineTo(-s * 0.5, s * 0.4); // bottom-left of body
+        ctx.closePath();
+        ctx.fillStyle = PLAYER_COLOR;
+        ctx.fill();
+
+        // -- Left wing --
+        ctx.beginPath();
+        ctx.moveTo(-s * 0.3, s * 0.1);  // wing root top
+        ctx.lineTo(-s * 0.9, s * 0.5);  // wing tip
+        ctx.lineTo(-s * 0.4, s * 0.4);  // wing root bottom
+        ctx.closePath();
+        ctx.fillStyle = '#0891b2'; // slightly darker cyan
+
+        ctx.fill();
+
+        // -- Right wing (mirror of left) --
+        ctx.beginPath();
+        ctx.moveTo(s * 0.3, s * 0.1);
+        ctx.lineTo(s * 0.9, s * 0.5);
+        ctx.lineTo(s * 0.4, s * 0.4);
+        ctx.closePath();
+        ctx.fillStyle = '#0891b2';
+        ctx.fill();
+
+        // -- Engine glow at the bottom --
+        ctx.beginPath();
+        ctx.arc(0, s * 0.25, s * 0.15, 0, Math.PI * 2);
+        ctx.fillStyle = '#fbbf24'; // amber glow
+        ctx.fill();
+
+        // -- Cockpit window --
+        ctx.beginPath();
+        ctx.arc(0, -s * 0.35, s * 0.12, 0, Math.PI * 2);
+        ctx.fillStyle = '#e0f2fe'; // light blue glass
+        ctx.fill();
+
+        ctx.restore(); // undo the translate so nothing else is affected
+
+        // --- Draw enemies ---
+        // Design: wide squat saucer with jagged downward fangs — clearly alien,
+        // nothing like the player's sleek upward-pointing rocket.
+        for (const e of enemies) {
+          const s = ENEMY_SIZE;
+          ctx.save();
+          ctx.translate(e.x, e.y);
+
+          // -- Wide flat body --
+          ctx.beginPath();
+          ctx.moveTo(0, s * 0.9);           // bottom fang tip (pointing down)
+          ctx.lineTo(-s * 0.4, s * 0.2);    // lower-left of body
+          ctx.lineTo(-s * 0.5, -s * 0.3);   // upper-left of body
+          ctx.lineTo(0, -s * 0.6);          // top center (flat-ish)
+          ctx.lineTo(s * 0.5, -s * 0.3);    // upper-right of body
+          ctx.lineTo(s * 0.4, s * 0.2);     // lower-right of body
+          ctx.closePath();
+          ctx.fillStyle = '#dc2626'; // bold red
+          ctx.fill();
+
+          // -- Left claw wing --
+          ctx.beginPath();
+          ctx.moveTo(-s * 0.4, s * 0.1);    // root
+          ctx.lineTo(-s * 1.0, -s * 0.1);   // outer tip
+          ctx.lineTo(-s * 0.8, s * 0.4);    // lower tip (forward-swept claw)
+          ctx.lineTo(-s * 0.5, s * 0.3);    // back to body
+          ctx.closePath();
+          ctx.fillStyle = '#b91c1c'; // darker red
+          ctx.fill();
+
+          // -- Right claw wing (mirror) --
+          ctx.beginPath();
+          ctx.moveTo(s * 0.4, s * 0.1);
+          ctx.lineTo(s * 1.0, -s * 0.1);
+          ctx.lineTo(s * 0.8, s * 0.4);
+          ctx.lineTo(s * 0.5, s * 0.3);
+          ctx.closePath();
+          ctx.fillStyle = '#b91c1c';
+          ctx.fill();
+
+          // -- Yellow eye / sensor in the center --
+          ctx.beginPath();
+          ctx.arc(0, -s * 0.1, s * 0.18, 0, Math.PI * 2);
+          ctx.fillStyle = '#fbbf24'; // yellow
+          ctx.fill();
+
+          // -- Yellow engine glow at the top (their exhaust faces up since they fly down) --
+          ctx.beginPath();
+          ctx.arc(0, -s * 0.5, s * 0.1, 0, Math.PI * 2);
+          ctx.fillStyle = '#fde68a'; // pale yellow
+          ctx.fill();
+
+          ctx.restore();
+        }
+
+        // --- Draw player bullets ---
+        for (const b of bullets) {
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, BULLET_SIZE, 0, Math.PI * 2);
+          ctx.fillStyle = BULLET_COLOR;
+          ctx.fill();
+        }
+
+        // --- Draw enemy bullets ---
+        for (const b of enemyBullets) {
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, ENEMY_BULLET_SIZE, 0, Math.PI * 2);
+          ctx.fillStyle = ENEMY_BULLET_COLOR;
+          ctx.fill();
+          // Small bright red core so they're easy to spot
+          ctx.beginPath();
+          ctx.arc(b.x, b.y, ENEMY_BULLET_SIZE * 0.45, 0, Math.PI * 2);
+          ctx.fillStyle = '#dc2626';
+          ctx.fill();
+        }
+
+        // Game over is now handled by the HTML panel (#gameOverPanel)
+      }
+
+      // ============================================================
+      // GAME LOOP — ties update and draw together, runs ~60 fps
+      // ============================================================
+      function gameLoop() {
+        update(); // advance logic
+        draw();   // render the result
+        requestAnimationFrame(gameLoop); // ask the browser to call us next frame
+      }
+
+      // "Play Again" button inside the game over panel restarts the game
+      document.getElementById('playAgainBtn').addEventListener('click', resetGame);
+
+      // Show the start panel on page load so the player can enter their name
+      showStartPanel();
+
+      // ============================================================
+      // MOBILE TOUCH CONTROLS
+      // Each on-screen button sets the same keys{} entries that the
+      // keyboard listeners use, so no game logic needs to change.
+      // ============================================================
+      function bindTouchBtn(id, key) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.addEventListener('touchstart', (e) => { e.preventDefault(); keys[key] = true;  }, { passive: false });
+        el.addEventListener('touchend',   (e) => { e.preventDefault(); keys[key] = false; }, { passive: false });
+        // Also handle the case where a finger slides off the button
+        el.addEventListener('touchcancel',(e) => { e.preventDefault(); keys[key] = false; }, { passive: false });
+      }
+
+      bindTouchBtn('btnUp',    'ArrowUp');
+      bindTouchBtn('btnDown',  'ArrowDown');
+      bindTouchBtn('btnLeft',  'ArrowLeft');
+      bindTouchBtn('btnRight', 'ArrowRight');
+      bindTouchBtn('btnFire',  ' ');
+
+      // Kick everything off!
+      requestAnimationFrame(gameLoop);
+    </script>
+  </body>
+</html>
