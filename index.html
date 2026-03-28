@@ -278,17 +278,32 @@
         document.getElementById('gameOverPanel').classList.add('hidden');
       }
 
+      // Rejects after ms milliseconds — used to prevent Firestore from hanging forever
+      function withTimeout(promise, ms) {
+        const timer = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), ms)
+        );
+        return Promise.race([promise, timer]);
+      }
+
       // Auto-submit the score using the name captured at game start
       async function submitScore(name, scoreVal) {
         try {
-          await db.collection('scores').add({
-            name:      name,
-            score:     scoreVal,
-            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          });
+          await withTimeout(
+            db.collection('scores').add({
+              name:      name,
+              score:     scoreVal,
+              timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            }),
+            6000 // give up after 6 seconds
+          );
           document.getElementById('submitStatus').textContent = `Saved as "${name}"`;
         } catch (e) {
-          document.getElementById('submitStatus').textContent = 'Could not save score.';
+          const msg = e.message === 'timeout'
+            ? 'Could not reach Firestore — check your Firebase console (Firestore must be created & rules must allow writes)'
+            : `Could not save score: ${e.message}`;
+          document.getElementById('submitStatus').textContent = msg;
+          console.error('Firestore write error:', e);
         }
         loadLeaderboard();
       }
@@ -298,10 +313,10 @@
         const list = document.getElementById('leaderboardList');
         list.innerHTML = '<li class="text-gray-500">Loading…</li>';
         try {
-          const snap = await db.collection('scores')
-            .orderBy('score', 'desc')
-            .limit(10)
-            .get();
+          const snap = await withTimeout(
+            db.collection('scores').orderBy('score', 'desc').limit(10).get(),
+            6000
+          );
           if (snap.empty) {
             list.innerHTML = '<li class="text-gray-500">No scores yet!</li>';
             return;
@@ -310,14 +325,14 @@
           snap.docs.forEach((doc, i) => {
             const d  = doc.data();
             const li = document.createElement('li');
-            // Highlight the player's just-submitted score in yellow
             li.className = 'flex justify-between px-2 py-0.5 rounded ' +
               (d.name === playerName && d.score === score ? 'text-yellow-400' : 'text-gray-300');
             li.innerHTML = `<span>${i + 1}. ${d.name}</span><span>${d.score}</span>`;
             list.appendChild(li);
           });
         } catch (e) {
-          list.innerHTML = '<li class="text-red-400">Could not load scores.</li>';
+          list.innerHTML = '<li class="text-red-400">Could not load leaderboard.</li>';
+          console.error('Firestore read error:', e);
         }
       }
 
