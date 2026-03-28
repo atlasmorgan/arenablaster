@@ -257,6 +257,7 @@
         const input = document.getElementById('playerNameInput').value.trim();
         playerName  = input || 'Anonymous';
         localStorage.setItem('arenaPlayerName', playerName); // remember for next session
+        if (DEV_MODE) document.getElementById('devPlayerName').textContent = playerName;
         // Clear any keys that got stuck while typing in the name field
         for (const k in keys) keys[k] = false;
         document.getElementById('startPanel').classList.add('hidden');
@@ -764,30 +765,15 @@
   <div id="devSidebar" class="hidden fixed right-0 top-0 h-full w-60 bg-gray-950 border-l-2 border-cyan-800 p-4 font-mono text-xs z-50 flex flex-col gap-3 overflow-y-auto">
     <h2 class="text-cyan-400 font-bold text-sm">Dev Mode</h2>
 
-    <!-- Single score -->
+    <!-- Score entry — uses the name from the start screen -->
     <div class="flex flex-col gap-1">
-      <label class="text-gray-400 uppercase tracking-widest text-xs">Name</label>
-      <input id="devName" value="TestUser" maxlength="16"
-        class="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-cyan-300 outline-none focus:border-cyan-500" />
-      <label class="text-gray-400 uppercase tracking-widest text-xs mt-1">Score (1 – 1,000,000)</label>
+      <p class="text-gray-400">Playing as: <span id="devPlayerName" class="text-cyan-300">—</span></p>
+      <label class="text-gray-400 uppercase tracking-widest text-xs mt-1">Score to submit</label>
       <input id="devScore" type="number" min="1" max="1000000" value="500"
         class="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-cyan-300 outline-none focus:border-cyan-500" />
       <button id="devSubmitOne"
         class="mt-1 py-1 bg-cyan-800 hover:bg-cyan-700 text-white font-bold rounded transition-colors">
-        Add Score
-      </button>
-    </div>
-
-    <hr class="border-gray-700" />
-
-    <!-- Bulk random scores -->
-    <div class="flex flex-col gap-1">
-      <label class="text-gray-400 uppercase tracking-widest text-xs">Bulk random entries (max 50)</label>
-      <input id="devBulkCount" type="number" min="1" max="50" value="10"
-        class="px-2 py-1 bg-gray-800 border border-gray-600 rounded text-cyan-300 outline-none focus:border-cyan-500" />
-      <button id="devSubmitBulk"
-        class="mt-1 py-1 bg-purple-800 hover:bg-purple-700 text-white font-bold rounded transition-colors">
-        Add Random Scores
+        Submit to Leaderboard
       </button>
     </div>
 
@@ -799,38 +785,27 @@
 
   <script>
     // Show sidebar if ?dev is in the URL
-    if (DEV_MODE) document.getElementById('devSidebar').classList.remove('hidden');
+    if (DEV_MODE) {
+      document.getElementById('devSidebar').classList.remove('hidden');
+      // Show saved name if already set from a previous session
+      const saved = localStorage.getItem('arenaPlayerName');
+      if (saved) document.getElementById('devPlayerName').textContent = saved;
+    }
 
     function devStatus(msg) {
       document.getElementById('devStatus').textContent = msg;
     }
 
-    // Add a single named score
+    // Submit the typed score under the current playerName
     document.getElementById('devSubmitOne').addEventListener('click', async () => {
-      const name = document.getElementById('devName').value.trim() || 'Dev';
-      const val  = Math.max(1, Math.min(1000000, parseInt(document.getElementById('devScore').value) || 1));
+      const val = Math.max(1, Math.min(1000000, parseInt(document.getElementById('devScore').value) || 1));
       devStatus('Saving…');
       await db.collection('scores').add({
-        name, score: val,
+        name: playerName,
+        score: val,
         timestamp: firebase.firestore.FieldValue.serverTimestamp(),
       });
-      devStatus(`✓ Added ${val} pts for "${name}"`);
-      loadLeaderboard();
-    });
-
-    // Add N random scores with random names and scores 1–1,000,000
-    document.getElementById('devSubmitBulk').addEventListener('click', async () => {
-      const n = Math.max(1, Math.min(50, parseInt(document.getElementById('devBulkCount').value) || 10));
-      devStatus(`Adding ${n} random scores…`);
-      for (let i = 0; i < n; i++) {
-        const name  = `Player${Math.floor(Math.random() * 9999)}`;
-        const score = Math.floor(Math.random() * 1000000) + 1;
-        await db.collection('scores').add({
-          name, score,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-      devStatus(`✓ Done — added ${n} entries`);
+      devStatus(`✓ Added ${val} pts for "${playerName}"`);
       loadLeaderboard();
     });
   </script>
