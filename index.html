@@ -253,6 +253,7 @@
       function startGame() {
         const input = document.getElementById('playerNameInput').value.trim();
         playerName  = input || 'Anonymous';
+        localStorage.setItem('arenaPlayerName', playerName); // remember for next session
         document.getElementById('startPanel').classList.add('hidden');
         gameStarted = true;
         // Kick off background music (counts as user interaction so autoplay is allowed)
@@ -266,11 +267,11 @@
       });
 
       // ---- Game over panel ----
-      function showGameOverPanel(finalScore) {
+      async function showGameOverPanel(finalScore) {
         document.getElementById('finalScoreText').textContent = `Final Score: ${finalScore}`;
         document.getElementById('submitStatus').textContent   = 'Saving score…';
         document.getElementById('gameOverPanel').classList.remove('hidden');
-        submitScore(playerName, finalScore); // auto-submit with the name from the start screen
+        await submitScore(playerName, finalScore); // await so status text updates when done
       }
 
       function hideGameOverPanel() {
@@ -311,7 +312,7 @@
             const li = document.createElement('li');
             // Highlight the player's just-submitted score in yellow
             li.className = 'flex justify-between px-2 py-0.5 rounded ' +
-              (d.name === playerName && d.score === scoreVal ? 'text-yellow-400' : 'text-gray-300');
+              (d.name === playerName && d.score === score ? 'text-yellow-400' : 'text-gray-300');
             li.innerHTML = `<span>${i + 1}. ${d.name}</span><span>${d.score}</span>`;
             list.appendChild(li);
           });
@@ -710,7 +711,9 @@
       // "Play Again" button inside the game over panel restarts the game
       document.getElementById('playAgainBtn').addEventListener('click', resetGame);
 
-      // Show the start panel on page load so the player can enter their name
+      // Pre-fill name from last session if available, then show the start panel
+      const savedName = localStorage.getItem('arenaPlayerName');
+      if (savedName) document.getElementById('playerNameInput').value = savedName;
       showStartPanel();
 
       // ============================================================
