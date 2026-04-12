@@ -151,6 +151,7 @@
           <li><span class="text-red-400 font-bold">Enemy touches you</span> — −1 life</li>
           <li><span class="text-red-400 font-bold">Enemy bullet hits you</span> — −1 life</li>
           <li><span class="text-red-400 font-bold">Enemy reaches the bottom</span> — −1 life</li>
+          <li><span class="text-pink-400 font-bold">Heart power-up</span> — Fly into it or shoot it for +1 life (lasts 10 sec)</li>
           <li><span class="text-orange-400 font-bold">0 lives</span> — Game Over</li>
           <li class="pt-1"><span class="text-gray-400 font-bold">Click / Enter</span> — Restart after Game Over</li>
         </ul>
@@ -189,6 +190,12 @@
       const ENEMY_SHOOT_MIN   = 90;
       const ENEMY_SHOOT_MAX   = 180;
 
+      const HEART_SIZE         = 18;    // collision radius in pixels
+      const HEART_LIFETIME     = 600;   // frames until despawn (10 sec at 60fps)
+      const HEART_SPAWN_CHANCE = 0.003; // per-frame probability of spawning
+      const HEART_MAX          = 1;     // max hearts on screen at once
+      const LIVES_MAX          = 5;     // cap so lives can't grow forever
+
       // ============================================================
       // SETUP — size the canvas and grab the drawing context
       // ============================================================
@@ -222,6 +229,9 @@
 
       // Array of active enemy bullets — each is { x, y }
       const enemyBullets = [];
+
+      // Array of active heart power-ups — each is { x, y, timer }
+      const hearts = [];
 
       // Counts frames so we know when to spawn the next enemy
       let spawnTimer = 0;
@@ -356,6 +366,9 @@
       // Game over sound effect
       const gameOverSound = new Audio('assets/gameover.wav');
 
+      // Extra life sound effect (heart power-up collected)
+      const extraLifeSound = new Audio('assets/extralife.mp3');
+
       // Call this instead of setting gameOver = true directly,
       // so the sound always plays alongside the screen.
       // Deduct a life, play the hit sound, and trigger game over if lives hit 0
@@ -422,6 +435,7 @@
         bullets.length      = 0; // empty the arrays in place
         enemies.length      = 0;
         enemyBullets.length = 0;
+        hearts.length       = 0;
       }
 
       function update() {
@@ -507,6 +521,21 @@
           });
         }
 
+        // --- Spawn heart power-ups randomly ---
+        if (hearts.length < HEART_MAX && Math.random() < HEART_SPAWN_CHANCE) {
+          hearts.push({
+            x: HEART_SIZE + Math.random() * (CANVAS_WIDTH  - HEART_SIZE * 2),
+            y: HEART_SIZE + Math.random() * (CANVAS_HEIGHT - HEART_SIZE * 2),
+            timer: HEART_LIFETIME,
+          });
+        }
+
+        // Tick down hearts and remove expired ones
+        for (let i = hearts.length - 1; i >= 0; i--) {
+          hearts[i].timer--;
+          if (hearts[i].timer <= 0) hearts.splice(i, 1);
+        }
+
         // --- Move enemies, tick their shoot timers, remove off-screen ---
         for (let i = enemies.length - 1; i >= 0; i--) {
           const e = enemies[i];
@@ -570,6 +599,36 @@
           if (dist < PLAYER_SIZE + ENEMY_SIZE) {
             enemies.splice(i, 1); // enemy is consumed on impact
             loseLife();
+          }
+        }
+
+        // --- Player bullet vs heart collisions ---
+        for (let bi = bullets.length - 1; bi >= 0; bi--) {
+          for (let hi = hearts.length - 1; hi >= 0; hi--) {
+            const dist = Math.hypot(bullets[bi].x - hearts[hi].x, bullets[bi].y - hearts[hi].y);
+            if (dist < BULLET_SIZE + HEART_SIZE) {
+              bullets.splice(bi, 1);
+              hearts.splice(hi, 1);
+              if (lives < LIVES_MAX) {
+                lives++;
+                extraLifeSound.currentTime = 0;
+                extraLifeSound.play();
+              }
+              break;
+            }
+          }
+        }
+
+        // --- Player vs heart collisions ---
+        for (let i = hearts.length - 1; i >= 0; i--) {
+          const dist = Math.hypot(player.x - hearts[i].x, player.y - hearts[i].y);
+          if (dist < PLAYER_SIZE + HEART_SIZE) {
+            hearts.splice(i, 1);
+            if (lives < LIVES_MAX) {
+              lives++;
+              extraLifeSound.currentTime = 0;
+              extraLifeSound.play();
+            }
           }
         }
 
@@ -715,6 +774,26 @@
           ctx.arc(b.x, b.y, ENEMY_BULLET_SIZE * 0.45, 0, Math.PI * 2);
           ctx.fillStyle = '#dc2626';
           ctx.fill();
+        }
+
+        // --- Draw heart power-ups ---
+        for (const h of hearts) {
+          // Blink in the last 3 seconds (< 180 frames remaining)
+          const blink = h.timer < 180 ? (Math.floor(h.timer / 10) % 2 === 0 ? 0.3 : 1.0) : 1.0;
+          ctx.save();
+          ctx.globalAlpha = blink;
+          ctx.translate(h.x, h.y);
+          // Heart shape built from two bezier curves
+          ctx.beginPath();
+          ctx.moveTo(0, -HEART_SIZE * 0.4);
+          ctx.bezierCurveTo( HEART_SIZE * 0.5, -HEART_SIZE,  HEART_SIZE, -HEART_SIZE * 0.3,  0,  HEART_SIZE * 0.6);
+          ctx.bezierCurveTo(-HEART_SIZE,        -HEART_SIZE * 0.3, -HEART_SIZE * 0.5, -HEART_SIZE, 0, -HEART_SIZE * 0.4);
+          ctx.fillStyle   = '#ff4d6d';
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth   = 1.5;
+          ctx.stroke();
+          ctx.restore();
         }
 
         // Game over is now handled by the HTML panel (#gameOverPanel)
