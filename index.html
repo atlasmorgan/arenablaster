@@ -77,9 +77,17 @@
     <div id="canvasWrapper" style="position:relative; width:100%; max-width:800px;">
       <canvas id="gameCanvas"></canvas>
 
+      <!-- ===================== INTRO PANEL ===================== -->
+      <!-- Full-screen splash shown once on first load; click anywhere to begin -->
+      <div id="introPanel" class="fixed inset-0 bg-black flex items-center justify-center z-50 cursor-pointer">
+        <img id="introLogo" src="assets/flamegames.png"
+             style="opacity:0; max-width:60%; max-height:60%; transition: opacity 0.8s ease-in-out;" />
+        <p id="introPrompt" style="position:absolute; bottom:10%; font-family:monospace; font-size:clamp(1rem,3vw,1.4rem); color:#aaa; letter-spacing:0.15em;">CLICK TO ENABLE SOUND (REQUIRED)</p>
+      </div>
+
       <!-- ===================== START PANEL ===================== -->
       <!-- Shown on page load and after each game; player enters name here -->
-      <div id="startPanel" class="absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-4 font-mono p-4">
+      <div id="startPanel" class="hidden absolute inset-0 bg-black/85 flex flex-col items-center justify-center gap-4 font-mono p-4">
         <h1 class="text-cyan-400 font-bold" style="font-size:clamp(2rem,8vw,3.5rem)">Arena Blaster</h1>
         <p class="text-gray-400 text-sm">Defend the arena. Shoot everything.</p>
 
@@ -113,6 +121,9 @@
         </button>
       </div>
     </div>
+
+    <!-- Intro audio -->
+    <audio id="introSound" src="assets/intro.wav" preload="auto"></audio>
 
     <!-- ===================== MOBILE CONTROLS ===================== -->
     <!-- Only visible on small screens; desktop players use keyboard -->
@@ -256,6 +267,33 @@
 
       // Dev mode — activated by visiting the page with ?dev in the URL
       const DEV_MODE = new URLSearchParams(window.location.search).has('dev');
+
+      // ---- Intro sequence ----
+      function showIntro() {
+        const panel = document.getElementById('introPanel');
+        const logo  = document.getElementById('introLogo');
+        const sound = document.getElementById('introSound');
+
+        panel.addEventListener('click', function startIntro() {
+          panel.removeEventListener('click', startIntro);
+          document.getElementById('introPrompt').style.display = 'none';
+          sound.play().catch(() => {});
+          logo.style.opacity = '1';
+          const fadeDuration = 800;
+          setTimeout(() => { logo.style.opacity = '0'; }, (sound.duration * 1000) - fadeDuration);
+          sound.addEventListener('ended', () => {
+            panel.style.display = 'none';
+            showStartPanel();
+          });
+          // Fallback in case audio fails to fire 'ended'
+          setTimeout(() => {
+            if (panel.style.display !== 'none') {
+              panel.style.display = 'none';
+              showStartPanel();
+            }
+          }, 4500);
+        });
+      }
 
       // ---- Start panel ----
       function showStartPanel() {
@@ -811,10 +849,10 @@
       // "Play Again" button inside the game over panel restarts the game
       document.getElementById('playAgainBtn').addEventListener('click', resetGame);
 
-      // Pre-fill name from last session if available, then show the start panel
+      // Pre-fill name from last session if available, then show the intro
       const savedName = localStorage.getItem('arenaPlayerName');
       if (savedName) document.getElementById('playerNameInput').value = savedName;
-      showStartPanel();
+      showIntro();
 
       // ============================================================
       // MOBILE TOUCH CONTROLS
